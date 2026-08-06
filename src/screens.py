@@ -21,6 +21,48 @@ else:
 #Set default font 
 ImageDraw.ImageDraw.font = ImageFont.truetype(root_dir / 'lib'/ 'font' /'RobotoMono-Light.ttf')
 
+# Eng sheet column names we pull typed values out of. The sheet is a hand-maintained
+# spreadsheet export, so treat every one of these as optional.
+ENG_TILE_MM_WIDTH = 'Tile MM Width'
+ENG_TILE_MM_HEIGHT = 'Tile MM Height'
+ENG_PITCH_MM = 'Pitch (mm)'
+ENG_PRODUCT = 'Product'
+ENG_SCREEN_M_WIDTH = 'Screen M Width'
+ENG_SCREEN_M_HEIGHT = 'Screen M Height'
+
+# Where a screen's physical dimensions came from.
+PHYSICAL_FROM_SHEET = 'eng_sheet'
+PHYSICAL_FROM_REPO = 'tile_repository'
+PHYSICAL_UNKNOWN = 'unknown'
+
+
+def parse_number(value):
+    """Best-effort float from an eng sheet cell, or None.
+
+    The sheets are full of '#DIV/0!', '#REF!', blanks, thousands separators and
+    stray units. Nothing downstream of this should ever raise on a junk cell, so
+    anything unparseable comes back as None rather than propagating an error.
+    """
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    text = str(value).strip()
+    if not text or text.startswith('#'):
+        return None
+
+    # Drop thousands separators and anything that isn't part of a number.
+    text = text.replace(',', '')
+    match = re.search(r'-?\d*\.?\d+', text)
+    if not match:
+        return None
+    try:
+        return float(match.group())
+    except ValueError:
+        return None
+
+
 class Screen: 
     def __init__(self, name, tile_width, tile_height, tiles_w, tiles_h, **kwargs) -> None:
         self.name = name
@@ -33,6 +75,111 @@ class Screen:
         self.colorBGHue = 0
         self.num = kwargs.get('num', 0)
         self.enabled_array = kwargs.get('enabled_array', [[True for _ in range(math.ceil(self.tiles_w))] for _ in range(math.ceil(self.tiles_h))])
+
+        # Eng sheet passthrough. `source_row` is the raw CSV row exactly as it was
+        # read, kept verbatim so the sidecar can hand downstream tools every column
+        # the sheet carried, including ones this app has no opinion about.
+        self.source_row = kwargs.get('source_row') or {}
+        self.tile_mm_width = kwargs.get('tile_mm_width')
+        self.tile_mm_height = kwargs.get('tile_mm_height')
+        self.pitch_mm = kwargs.get('pitch_mm')
+        self.product = kwargs.get('product')
+        self.physical_source = kwargs.get('physical_source', PHYSICAL_UNKNOWN)
+
+    def set_physical_from_tile(self, tile, source=PHYSICAL_FROM_REPO):
+        """Adopt physical dimensions from a tile repository record."""
+        if not tile:
+            return
+        self.tile_mm_width = parse_number(tile.get('physical_width'))
+        self.tile_mm_height = parse_number(tile.get('physical_height'))
+        self.pitch_mm = parse_number(tile.get('pitch'))
+        self.product = tile.get('name') or self.product
+        if self.tile_mm_width or self.tile_mm_height:
+            self.physical_source = source
+
+    def physical_size_mm(self):
+        """(width, height) of the whole screen in mm, or (None, None).
+
+        Recomputed from tile size x tile count rather than read off the sheet:
+        tile counts are editable in the app, so the sheet's own screen dimensions
+        go stale the moment anyone touches them.
+        """
+        width = self.tile_mm_width * self.tiles_w if self.tile_mm_width else None
+        height = self.tile_mm_height * self.tiles_h if self.tile_mm_height else None
+        return width, height
+
+    def tile_counts(self):
+        """(total, enabled, disabled) tile counts across the enabled_array."""
+        rows = math.ceil(self.tiles_h)
+        cols = math.ceil(self.tiles_w)
+        total = rows * cols
+        enabled = 0
+        for i in range(rows):
+            if i >= len(self.enabled_array):
+                continue
+            for j in range(cols):
+                if j < len(self.enabled_array[i]) and self.enabled_array[i][j]:
+                    enabled += 1
+        return total, enabled, total - enabled
+
+    def enabled_map(self):
+        """Serialize enabled_array as '110;011' - same format save_to_csv writes."""
+        return ';'.join(
+            ''.join(str(int(bool(val))) for val in row)
+            for row in self.enabled_array
+        )
+
+
+def resolve_physical_from_repo(screen, tiles=None):
+    """Fill in missing physical dimensions from the LED tile repository.
+
+    Only touches screens the eng sheet gave us nothing for. Matches on pixel
+    dimensions, preferring a tile whose name or brand also matches the sheet's
+    Product column so that two tiles sharing a pixel count don't get confused.
+    """
+    if screen.tile_mm_width and screen.tile_mm_height:
+        return screen
+
+    if tiles is None:
+        try:
+            from database import DatabaseManager
+            tiles = DatabaseManager().get_all_tiles()
+        except Exception as e:
+            logger.warning("Could not read tile repository: %s", e)
+            return screen
+
+    candidates = [
+        t for t in tiles
+        if parse_number(t.get('pixel_width')) == float(screen.tile_width)
+        and parse_number(t.get('pixel_height')) == float(screen.tile_height)
+    ]
+    if not candidates:
+        return screen
+
+    # Narrow by the sheet's Product string when it helps.
+    product = (screen.product or '').strip().lower()
+    if product:
+        named = [
+            t for t in candidates
+            if product in str(t.get('name', '')).lower()
+            or product in str(t.get('brand', '')).lower()
+            or str(t.get('name', '')).lower() in product
+        ]
+        if named:
+            candidates = named
+
+    if len(candidates) > 1:
+        # Several tiles share this pixel size and nothing disambiguates them.
+        # Reporting unknown beats guessing a physical size that ends up in a
+        # drawing someone builds a wall from.
+        logger.info(
+            "Skipping repo lookup for '%s': %d tiles share %sx%s px",
+            screen.name, len(candidates), screen.tile_width, screen.tile_height,
+        )
+        return screen
+
+    screen.set_physical_from_tile(candidates[0])
+    return screen
 
 
 class ScreenDrawer:
@@ -280,6 +427,26 @@ class ScreenList:
                             if enabled_array is not None:
                                 screen_kwargs['enabled_array'] = enabled_array
 
+                            # Keep the whole sheet row, plus typed copies of the
+                            # engineering columns the app can actually reason about.
+                            source_row = {k: v for k, v in row.items() if k is not None}
+                            tile_mm_width = parse_number(row.get(ENG_TILE_MM_WIDTH))
+                            tile_mm_height = parse_number(row.get(ENG_TILE_MM_HEIGHT))
+                            product = (row.get(ENG_PRODUCT) or '').strip() or None
+
+                            screen_kwargs.update({
+                                'source_row': source_row,
+                                'tile_mm_width': tile_mm_width,
+                                'tile_mm_height': tile_mm_height,
+                                'pitch_mm': parse_number(row.get(ENG_PITCH_MM)),
+                                'product': product,
+                                'physical_source': (
+                                    PHYSICAL_FROM_SHEET
+                                    if (tile_mm_width and tile_mm_height)
+                                    else PHYSICAL_UNKNOWN
+                                ),
+                            })
+
                             print(f"Adding screen with name: {row['WALL']}")
                             self.screens.append(
                                 Screen(
@@ -327,9 +494,12 @@ class ScreenList:
             curcol += coloroffset
 
 
-def test():
+def test(csv_name='LP.csv'):
+    # Imported here rather than at module scope: sidecar imports from this module.
+    from sidecar import write_sidecar
+
     print(root_dir)
-    csv_path = root_dir / 'temp' / 'LP.csv'
+    csv_path = root_dir / 'temp' / csv_name
     filename = os.path.basename(csv_path).split('.')[0]
     path = root_dir / 'testing' / filename
 
@@ -347,5 +517,7 @@ def test():
         testing.draw_eng()
         testing.draw_stealth()
 
+    print(f"Wrote sidecar: {write_sidecar(List.screens, path, csv_path)}")
+
 if __name__ == "__main__":
-    test()
+    test(sys.argv[1] if len(sys.argv) > 1 else 'LP.csv')

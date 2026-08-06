@@ -22,7 +22,8 @@ from flask import (
     render_template, redirect, url_for,
 )
 import session_store
-from screens import Screen, ScreenList, ScreenDrawer
+from screens import Screen, ScreenList, ScreenDrawer, PHYSICAL_UNKNOWN
+from sidecar import write_sidecar
 from database import DatabaseManager
 
 # ── basecamp integration ──────────────────────────────────────────────────
@@ -123,6 +124,15 @@ def screen_to_dict(screen: Screen) -> dict:
         'color_hue': screen.colorBGHue,
         'width_px': screen.width,
         'height_px': screen.height,
+        # Eng sheet passthrough. Screens round-trip through session_store between
+        # requests, so anything not carried here is lost before generation and the
+        # sidecar comes out empty.
+        'source_row': screen.source_row,
+        'tile_mm_width': screen.tile_mm_width,
+        'tile_mm_height': screen.tile_mm_height,
+        'pitch_mm': screen.pitch_mm,
+        'product': screen.product,
+        'physical_source': screen.physical_source,
     }
 
 
@@ -135,6 +145,12 @@ def dict_to_screen(d: dict) -> Screen:
         tiles_h=d['tiles_h'],
         num=d['id'],
         enabled_array=d['enabled_array'],
+        source_row=d.get('source_row'),
+        tile_mm_width=d.get('tile_mm_width'),
+        tile_mm_height=d.get('tile_mm_height'),
+        pitch_mm=d.get('pitch_mm'),
+        product=d.get('product'),
+        physical_source=d.get('physical_source', PHYSICAL_UNKNOWN),
     )
     screen.colorBGHue = d.get('color_hue', 0)
     return screen
@@ -485,12 +501,20 @@ def _run_generation(job_id: str, screens: list):
             with _jobs_lock:
                 _jobs[job_id]['progress'] = i + 1
 
-        # Build ZIP from generated PNGs
+        # Sidecar goes in the download too. A sidecar failure must not cost the
+        # user their rendered blocks, so it is logged rather than raised.
+        try:
+            write_sidecar(screens, output_path)
+        except Exception as e:
+            app.logger.warning("Could not write XML sidecar: %s", e)
+
+        # Build ZIP from every generated file (PNG blocks + the XML sidecar)
         zip_fd, zip_path = tempfile.mkstemp(suffix='.zip', prefix='screenmaker_out_')
         os.close(zip_fd)
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-            for png in sorted(output_path.rglob('*.png')):
-                zf.write(png, png.relative_to(output_path))
+            for item in sorted(output_path.rglob('*')):
+                if item.is_file():
+                    zf.write(item, item.relative_to(output_path))
 
         with _jobs_lock:
             _jobs[job_id]['status'] = 'complete'

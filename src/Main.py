@@ -9,6 +9,7 @@ from PySide6.QtGui import QPixmap, QPainter, QColor, QPen, QFont
 from PySide6.QtCore import Qt, QRectF, QPointF
 import math
 import screens
+import sidecar
 from settings import Settings
 
 class ImageViewer(QWidget):
@@ -260,6 +261,14 @@ class MainWindow(QMainWindow):
             # Trigger update
             self.update_screen_from_properties()
 
+            # Carry the tile's physical dimensions across too, so a screen built
+            # by picking from the repository still reports a real-world size.
+            selected_items = self.ledScreen_list_widget.selectedItems()
+            if selected_items and self.ledScreen_list:
+                current_index = self.ledScreen_list_widget.currentRow()
+                if 0 <= current_index < len(self.ledScreen_list.screens):
+                    self.ledScreen_list.screens[current_index].set_physical_from_tile(tile_data)
+
     def select_csv_file(self):
         # Open a file dialog to select a CSV file
         start_dir = ""
@@ -434,7 +443,18 @@ class MainWindow(QMainWindow):
             drawer.draw_content()
             drawer.draw_eng()
             drawer.draw_stealth()
-        
+
+        # Drop the XML sidecar alongside the block folders so other tools can
+        # pull this run in without going back to the eng sheet.
+        try:
+            sidecar_path = sidecar.write_sidecar(
+                self.ledScreen_list.screens, base_output_path, csv_path
+            )
+            print(f"Wrote sidecar: {sidecar_path}")
+        except Exception as e:
+            # A sidecar failure must never cost the user their rendered blocks.
+            print(f"Warning: could not write XML sidecar: {e}")
+
         print("Image creation complete.")
         # Here you could potentially show the image_tab_widget with the results
         # For now, we leave the interactive preview visible.
