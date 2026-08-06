@@ -184,6 +184,30 @@ def test_junk_cells_do_not_raise():
     print("✓ junk cells pass through without raising or corrupting the XML")
 
 
+def test_illegal_xml_characters():
+    print("Testing illegal XML characters in sheet cells...")
+    # A stray control character in one notes field must not cost the whole run
+    # its sidecar - ElementTree refuses to serialize a document containing one.
+    screen = Screen(
+        'Bell\x07Wall', 104, 208, 2, 2, num=0,
+        source_row={'WALL': 'Bell\x07Wall', 'Notes': 'vertical\x0btab', 'Naming': 'ok'},
+    )
+    root = _root_for([screen])
+    assert root.find('.//screen').get('name') == 'BellWall'
+
+    fields = {f.get('name'): f.text for f in root.find('.//source_row')}
+    assert fields['Notes'] == 'verticaltab'
+    assert fields['Naming'] == 'ok'
+
+    # The output paths embed the screen name, so they need stripping too.
+    for f in root.find('.//outputs'):
+        assert '\x07' not in f.get('path'), f.get('path')
+
+    # And it still serializes and reparses cleanly.
+    assert ET.fromstring(ET.tostring(root)) is not None
+    print("✓ control characters stripped, document still serializes")
+
+
 def test_repo_fallback():
     print("Testing tile repository fallback...")
     tiles = [{
@@ -280,6 +304,7 @@ if __name__ == "__main__":
         test_disabled_tiles,
         test_missing_physical_data,
         test_junk_cells_do_not_raise,
+        test_illegal_xml_characters,
         test_repo_fallback,
         test_ambiguous_repo_match_is_skipped,
         test_sheet_mismatch_flagged,

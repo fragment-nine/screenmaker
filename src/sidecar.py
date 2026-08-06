@@ -39,6 +39,27 @@ OUTPUT_ROLES = (
 )
 
 
+# The only codepoint ranges XML 1.0 permits. Spreadsheet exports occasionally
+# smuggle a control character through in a notes field, and ElementTree would
+# refuse to serialize the whole document over a single one - so they are dropped
+# rather than allowed to cost the run its sidecar. Written as ranges so no
+# literal control character has to appear in this source file.
+_LEGAL_XML_RANGES = (
+    (0x9, 0x9), (0xA, 0xA), (0xD, 0xD),
+    (0x20, 0xD7FF), (0xE000, 0xFFFD), (0x10000, 0x10FFFF),
+)
+
+
+def _xml_text(value):
+    """Coerce a cell to text that ElementTree will accept."""
+    if value is None:
+        return ''
+    return ''.join(
+        c for c in str(value)
+        if any(low <= ord(c) <= high for low, high in _LEGAL_XML_RANGES)
+    )
+
+
 def _fmt(value, places=4):
     """Format a number for an XML attribute; None becomes an empty string."""
     if value is None:
@@ -67,8 +88,12 @@ def _output_filename(screen):
     save under the screen's raw name, not the sanitized one - if that ever
     changes, this has to change with it or the sidecar points at files that
     aren't there.
+
+    The one divergence is a name containing characters XML cannot represent at
+    all: those are dropped here, so the recorded path won't match such a file on
+    disk. A valid document naming one file imprecisely beats no document.
     """
-    return "{:03d}_{}.png".format(screen.num, screen.name)
+    return "{:03d}_{}.png".format(screen.num, _xml_text(screen.name))
 
 
 def _add_physical(parent, screen):
@@ -110,9 +135,9 @@ def _add_physical(parent, screen):
 def _add_screen(parent, screen, index):
     element = ET.SubElement(parent, 'screen')
     element.set('index', str(index))
-    element.set('name', str(screen.name))
+    element.set('name', _xml_text(screen.name))
     if screen.product:
-        element.set('product', str(screen.product))
+        element.set('product', _xml_text(screen.product))
 
     pixels = ET.SubElement(element, 'pixels')
     pixels.set('width', _fmt(screen.width))
@@ -149,12 +174,12 @@ def _add_screen(parent, screen, index):
         for key, value in screen.source_row.items():
             if key is None:
                 continue
-            name = str(key).strip()
+            name = _xml_text(key).strip()
             if not name:
                 continue
             field = ET.SubElement(source_row, 'field')
             field.set('name', name)
-            field.text = '' if value is None else str(value)
+            field.text = _xml_text(value)
 
     return element
 
