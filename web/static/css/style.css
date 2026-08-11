@@ -1,8 +1,14 @@
 /* ── ScreenMaker / F9 · loudbox design system ───────────────────────────── */
 
-/* Design tokens — re-pointed at basecamp's loudbox palette & type
-   (see basecamp/docs/ADOPTING-THE-DESIGN-SYSTEM.md). Local --sm-* names are
-   kept as aliases so every call site below is untouched. */
+/* Design tokens. These local names are ScreenMaker's own; the values below are
+   the standalone fallback, used when the page isn't running inside basecamp.
+
+   Behind basecamp the `html.lb` block underneath re-points every one of them at
+   a loudbox design-system token instead. That matters because basecamp resolves
+   each person's light/dark choice into the /ds/styles.css it serves — a literal
+   hex here is frozen at whatever theme it was written in, which is why the tool
+   stayed dark for anyone who selected light mode.
+   See basecamp/docs/ADOPTING-THE-DESIGN-SYSTEM.md. */
 :root {
   --bg-0:        #0a0a0b;   /* page background — loudbox ink-900 */
   --bg-1:        #161619;   /* sidebar, panels — loudbox ink-700 */
@@ -18,12 +24,18 @@
   --accent:      #E16D48;   /* Spotlight Orange */
   --accent-h:    #ec8059;   /* orange, hover */
   --accent-dim:  rgba(225, 109, 72, 0.14);
+  --on-accent:   #0a0a0b;   /* text riding on an accent fill */
 
   --success:     #5fa05a;
   --success-h:   #4c8548;
+  --success-fg:  #8ecb86;   /* success as TEXT, readable on the tint */
   --warn:        #d9a441;
   --warn-h:      #bb8a37;
+  --warn-fg:     #e3b65a;
   --danger:      #cf5340;
+  --danger-fg:   #e8765f;
+  --danger-bg:   rgba(207, 83, 64, 0.15);
+  --danger-bd:   rgba(207, 83, 64, 0.44);
 
   --font-display: 'Work Sans', 'Helvetica Neue', Arial, sans-serif;
   --font-body:    'IBM Plex Sans', 'Helvetica Neue', Arial, sans-serif;
@@ -31,6 +43,46 @@
   --radius:      4px;
   --nav-h:       52px;
   --header-h:    52px;   /* fallback if the live ds/styles.css hasn't loaded yet */
+}
+
+/* ── basecamp: follow the account's light/dark choice ──────────────────────
+   Re-point the locals above onto design-system tokens so every existing call
+   site follows the theme with no other change. `html.lb` (0,1,1) outranks our
+   own `:root` whatever the load order.
+
+   Only SEMANTIC tokens are referenced, never primitives (--ink-600, --bone-300,
+   --orange): a primitive is a single fixed value and does not flip between
+   themes, so a local pointed at one would stay dark in light mode.
+
+   Three of our local names — --border, --accent and --on-accent — collide with
+   names the design system itself owns. Those are deliberately ABSENT here: the
+   gateway pins DS-owned tokens at (0,2,0), so they already carry the themed
+   value, and re-declaring them as `var(--border)` would be a self-referential
+   cycle that resolves to nothing. */
+html.lb, body.lb {
+  --bg-0:        var(--bg-base);
+  --bg-1:        var(--bg-surface);
+  --bg-2:        var(--bg-input);
+  --bg-3:        var(--bg-hover);
+  --border-mid:  var(--border-strong);
+
+  --text-1:      var(--text-primary);
+  --text-2:      var(--text-secondary);
+  --text-3:      var(--text-muted);
+
+  --accent-h:    var(--accent-hover);
+  --accent-dim:  var(--accent-wash);
+
+  --success:     var(--status-good);
+  --success-h:   color-mix(in srgb, var(--status-good) 82%, #000);
+  --success-fg:  var(--status-good-fg);
+  --warn:        var(--status-warn);
+  --warn-h:      color-mix(in srgb, var(--status-warn) 82%, #000);
+  --warn-fg:     var(--status-warn-fg);
+  --danger:      var(--status-error);
+  --danger-fg:   var(--status-error-fg);
+  --danger-bg:   var(--status-error-bg);
+  --danger-bd:   var(--status-error-bd);
 }
 
 /* ── Reset / Base ──────────────────────────────────────────────────────── */
@@ -133,12 +185,12 @@ body.lb .sm-nav {
 .sm-btn-primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 .sm-btn-primary:hover:not(:disabled) {
   background: var(--accent-h);
   border-color: var(--accent-h);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .sm-btn-ghost {
@@ -155,12 +207,12 @@ body.lb .sm-nav {
 .sm-btn-warn {
   background: transparent;
   border-color: var(--border-mid);
-  color: var(--warn);
+  color: var(--warn-fg);
 }
 .sm-btn-warn:hover:not(:disabled) {
-  background: rgba(197, 125, 26, 0.1);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
   border-color: var(--warn);
-  color: var(--warn);
+  color: var(--warn-fg);
 }
 
 .sm-btn-icon {
@@ -469,11 +521,11 @@ body.lb .sm-nav {
   color: var(--text-1);
 }
 .sm-dropdown-item.danger {
-  color: #e8765f;
+  color: var(--danger-fg);
 }
 .sm-dropdown-item.danger:hover {
-  background: rgba(207, 83, 64, 0.15);
-  color: #e8765f;
+  background: var(--danger-bg);
+  color: var(--danger-fg);
 }
 
 .sm-dropdown-divider {
@@ -661,9 +713,9 @@ body.lb .sm-nav {
 }
 
 .sm-alert-danger {
-  background: rgba(207, 83, 64, 0.15);
-  border: 1px solid rgba(207, 83, 64, 0.44);
-  color: #e8765f;
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-bd);
+  color: var(--danger-fg);
 }
 
 /* ── Login page ─────────────────────────────────────────────────────────── */
@@ -725,4 +777,4 @@ body.lb .sm-nav {
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--bg-3); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #333; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-mid); }
