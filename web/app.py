@@ -11,7 +11,6 @@ import tempfile
 import threading
 import shutil
 import io
-import re
 from pathlib import Path
 from functools import wraps
 
@@ -482,12 +481,7 @@ def add_tile():
 
 # ── Image Generation ───────────────────────────────────────────────────────────
 
-def _clean_version(raw) -> str:
-    """Version tag from the toolbar, made safe to drop into a file name."""
-    return re.sub(r'[^A-Za-z0-9._-]+', '', str(raw or '').strip().replace(' ', '_'))[:32]
-
-
-def _run_generation(job_id: str, screens: list, version: str = ''):
+def _run_generation(job_id: str, screens: list):
     """Background worker: generate PNGs for all screens and zip the results."""
     tmp_dir = None
     try:
@@ -500,7 +494,7 @@ def _run_generation(job_id: str, screens: list, version: str = ''):
             (output_path / subdir).mkdir()
 
         for i, screen in enumerate(screens):
-            drawer = ScreenDrawer(screen, output_path, version)
+            drawer = ScreenDrawer(screen, output_path)
             drawer.draw_content()
             drawer.draw_eng()
             drawer.draw_stealth()
@@ -543,7 +537,6 @@ def generate():
         return jsonify({'error': 'No screens loaded'}), 400
 
     screens = [dict_to_screen(s) for s in screens_data]
-    version = _clean_version((request.get_json(silent=True) or {}).get('version'))
     job_id = str(uuid.uuid4())
 
     with _jobs_lock:
@@ -553,10 +546,9 @@ def generate():
             'total': len(screens),
             'zip_path': None,
             'error': None,
-            'version': version,
         }
 
-    thread = threading.Thread(target=_run_generation, args=(job_id, screens, version), daemon=True)
+    thread = threading.Thread(target=_run_generation, args=(job_id, screens), daemon=True)
     thread.start()
     return jsonify({'job_id': job_id})
 
@@ -593,9 +585,7 @@ def download_zip(job_id):
     timer.daemon = True
     timer.start()
 
-    version = job.get('version')
-    name = f'screenmaker_output_{version}.zip' if version else 'screenmaker_output.zip'
-    return send_file(zip_path, as_attachment=True, download_name=name)
+    return send_file(zip_path, as_attachment=True, download_name='screenmaker_output.zip')
 
 
 app.register_blueprint(bp, url_prefix=BASE_PATH)

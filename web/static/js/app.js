@@ -488,8 +488,7 @@ async function handleGenerate() {
   modal.show();
 
   try {
-    const version = document.getElementById('versionTag').value.trim();
-    const { job_id } = await apiPost('/api/generate', { version });
+    const { job_id } = await apiPost('/api/generate');
     state.currentJobId = job_id;
     _pollJobStatus(job_id, modal);
   } catch (e) {
