@@ -183,9 +183,11 @@ def resolve_physical_from_repo(screen, tiles=None):
 
 
 class ScreenDrawer:
-    def __init__(self, screen: Screen, path) -> None:
+    def __init__(self, screen: Screen, path, version: str = '') -> None:
         self.screen = screen
         self.path = path
+        # Optional version tag appended to every output name, e.g. "_v3".
+        self.version = version.strip()
         self.name = screen.name
         self.width = int(screen.tile_width * screen.tiles_w) 
         self.height = int(screen.tile_height * screen.tiles_h)
@@ -203,11 +205,17 @@ class ScreenDrawer:
         self.error = False
 
 
+    def out_name(self):
+        if not self.version:
+            return "{:03d}_{}.png".format(self.num, self.name)
+        # Sheet names often carry a trailing space; don't let it split the tag off.
+        return "{:03d}_{}_{}.png".format(self.num, self.name.strip(), self.version)
+
     def draw_eng(self):
         self.resetImg()
         self.draw_tiles()
         self.draw_screen_text()
-        self.im.save(self.path / '02_Eng_Blocks' / ("{:03d}_{}.png".format(self.num, self.name)))
+        self.im.save(self.path / '02_Eng_Blocks' / self.out_name())
         pass
 
 
@@ -215,13 +223,13 @@ class ScreenDrawer:
         self.resetImg()
         self.drawBG(gray, red)
         self.draw_screen_text()
-        self.im.save(self.path / '01_Content_Blocks' / (("{:03d}_{}.png".format(self.num, self.name))))
+        self.im.save(self.path / '01_Content_Blocks' / self.out_name())
         pass
 
     def draw_stealth(self):
         self.resetImg()
         self.drawBG((0,0,0), (76,185,227))
-        self.im.save(self.path / '03_Stealth_Blocks' / (("{:03d}_{}.png".format(self.num, self.name))))
+        self.im.save(self.path / '03_Stealth_Blocks' / self.out_name())
         pass
 
     def draw_pretty(self):
